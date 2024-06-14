@@ -4,9 +4,22 @@ import streamlit as st
 from duckduckgo_search import DDGS
 from phi.assistant import Assistant
 from phi.utils.log import logger
+from dotenv import load_dotenv
+import os
 
 from assistants import get_invstment_research_assistant  # type: ignore
 
+def init_groq():
+    # Load environment variables from the .env file
+    load_dotenv()
+
+    # Retrieve the API key from the environment
+    groq_api_key = os.getenv("GROQ_API_KEY")
+
+    # Set the API key as a system environment variable
+    os.environ["GROQ_API_KEY"] = groq_api_key
+
+init_groq()
 nest_asyncio.apply()
 st.set_page_config(
     page_title="Investment Researcher",
