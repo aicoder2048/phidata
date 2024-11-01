@@ -38,6 +38,7 @@ dist
 venv*
 phienv*
 aienv*
+phidata_venv
 
 # ignore tmp dirs
 scratch

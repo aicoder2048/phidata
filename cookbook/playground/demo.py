@@ -12,14 +12,26 @@ from phi.tools.duckduckgo import DuckDuckGo
 from phi.tools.exa import ExaTools
 from phi.tools.yfinance import YFinanceTools
 from phi.tools.youtube_tools import YouTubeTools
+import os
+from dotenv import load_dotenv
 
 agent_storage_file: str = "tmp/agents.db"
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Get OPENAI_API_KEY from environment variables
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not OPENAI_API_KEY:
+    raise ValueError("OPENAI_API_KEY not found in .env file")
+
 
 web_agent = Agent(
     name="Web Agent",
     role="Search the web for information",
     agent_id="web-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY),
     tools=[DuckDuckGo()],
     instructions=["Break down the users request into 2-3 different searches.", "Always include sources"],
     storage=SqlAgentStorage(table_name="web_agent", db_file=agent_storage_file),
@@ -33,7 +45,7 @@ finance_agent = Agent(
     name="Finance Agent",
     role="Get financial data",
     agent_id="finance-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY),
     tools=[YFinanceTools(stock_price=True, analyst_recommendations=True, company_info=True, company_news=True)],
     instructions=["Always use tables to display data"],
     storage=SqlAgentStorage(table_name="finance_agent", db_file=agent_storage_file),
@@ -47,7 +59,7 @@ image_agent = Agent(
     name="Image Agent",
     role="Generate images given a prompt",
     agent_id="image-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY),
     tools=[Dalle(model="dall-e-3", size="1792x1024", quality="hd", style="vivid")],
     storage=SqlAgentStorage(table_name="image_agent", db_file=agent_storage_file),
     add_history_to_messages=True,
@@ -59,7 +71,7 @@ research_agent = Agent(
     name="Research Agent",
     role="Write research reports for the New York Times",
     agent_id="research-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY),
     tools=[ExaTools(start_published_date=datetime.now().strftime("%Y-%m-%d"), type="keyword")],
     description=(
         "You are a Research Agent that has the special skill of writing New York Times worthy articles. "
@@ -101,7 +113,7 @@ research_agent = Agent(
 youtube_agent = Agent(
     name="YouTube Agent",
     agent_id="youtube-agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-4o", api_key=OPENAI_API_KEY),
     tools=[YouTubeTools()],
     description="You are a YouTube agent that has the special skill of understanding YouTube videos and answering questions about them.",
     instructions=[
