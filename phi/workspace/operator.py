@@ -165,24 +165,24 @@ def create_workspace(name: Optional[str] = None, template: Optional[str] = None,
         logger.warning("Please manually copy workspace/example_secrets to workspace/secrets")
 
     print_info(f"Your new workspace is available at {str(ws_root_path)}\n")
-    return setup_workspace(ws_root_path=ws_root_path, team=None)
+    return setup_workspace(ws_root_path=ws_root_path)
 
 
-def setup_workspace(ws_root_path: Path, team: Optional[str] = None) -> bool:
+def setup_workspace(ws_root_path: Path) -> bool:
     """Setup a phi workspace at `ws_root_path`.
 
     1. Pre-requisites
-    1.1 Check ws_root_path is available
-    1.2 Check PhiCliConfig is available
-    1.3 Check if WorkspaceConfig is available or `workspace` dir exists in ws_root_path
-    1.4 Get the workspace dir name
-    1.5 Check if remote origin is available
-    1.6 Create anon user if not available
+    1.1 Check ws_root_path exists and is a directory
+    1.2 Create PhiCliConfig if needed
+    1.3 Create a WorkspaceConfig if needed
+    1.4 Get the workspace name
+    1.5 Get the git remote origin url
+    1.6 Create anon user if needed
 
-    2. Create or Update WorkspaceSchema
-    If a ws_schema exists for this workspace, this workspace has a record in the backend
-    2.1 Create WorkspaceSchema for a NEWLY CREATED WORKSPACE
-    2.2 Update WorkspaceSchema if git_url is updated
+    2. Create or update WorkspaceSchema
+    2.1 Check if a ws_schema exists for this workspace, meaning this workspace has a record in phi-api
+    2.2 Create WorkspaceSchema if it doesn't exist
+    2.3 Update WorkspaceSchema if git_url is updated
     """
     from rich.live import Live
     from rich.status import Status
@@ -195,20 +195,16 @@ def setup_workspace(ws_root_path: Path, team: Optional[str] = None) -> bool:
     ######################################################
     ## 1. Pre-requisites
     ######################################################
-    ######################################################
-    # 1.1 Check ws_root_path is available
-    ######################################################
-    _ws_is_valid: bool = ws_root_path is not None and ws_root_path.exists() and ws_root_path.is_dir()
-    if not _ws_is_valid:
+    # 1.1 Check ws_root_path exists and is a directory
+    ws_is_valid: bool = ws_root_path is not None and ws_root_path.exists() and ws_root_path.is_dir()
+    if not ws_is_valid:
         logger.error("Invalid directory: {}".format(ws_root_path))
         return False
 
-    ######################################################
-    # 1.2 Check PhiCliConfig is available
-    ######################################################
+    # 1.2 Create PhiCliConfig if needed
     phi_config: Optional[PhiCliConfig] = PhiCliConfig.from_saved_config()
     if not phi_config:
-        # Phidata should be initialized before workspace setup
+        # Initialize PhiCliConfig before setting up workspace
         init_success = initialize_phi()
         if not init_success:
             from phi.cli.console import log_phi_init_failed_msg
@@ -220,69 +216,63 @@ def setup_workspace(ws_root_path: Path, team: Optional[str] = None) -> bool:
         if not phi_config:
             raise Exception("Failed to initialize phi")
 
-    ######################################################
-    # 1.3 Check if WorkspaceConfig is available or `workspace` dir exists in ws_root_path
-    ######################################################
+    # 1.3 Create a WorkspaceConfig if needed
     logger.debug(f"Checking for a workspace at {ws_root_path}")
     ws_config: Optional[WorkspaceConfig] = phi_config.get_ws_config_by_path(ws_root_path)
     if ws_config is None:
-        # This happens if
-        # - The user is setting up a workspace not previously setup on this machine
-        # - OR the user ran `phi init -r` which erases existing records of workspaces
-        logger.debug(f"Could not find an existing workspace at: {ws_root_path}")
+        # There's no record of this workspace, reasons:
+        # - The user is setting up a new workspace
+        # - The user ran `phi init -r` which erased existing workspaces
+        logger.debug(f"Could not find a workspace at: {ws_root_path}")
 
-        # Check if the workspace dir exists
-        workspace_dir_path = get_workspace_dir_path(ws_root_path)
-        if workspace_dir_path is None:
+        # Check if the workspace contains a `workspace` dir
+        workspace_ws_dir_path = get_workspace_dir_path(ws_root_path)
+        if workspace_ws_dir_path is None:
             logger.error(f"Could not find a `workspace` directory in: {ws_root_path}")
-            return False
+            exit(1)
+        logger.debug(f"Found a `workspace` directory: {workspace_ws_dir_path}")
+        ws_config = phi_config.create_or_update_ws_config(ws_root_path=ws_root_path, set_as_active=True)
+        if ws_config is None:
+            logger.error(f"Failed to create workspace at {ws_root_path}")
+            exit(1)
     else:
         logger.debug(f"Found workspace at {ws_root_path}")
 
-    ######################################################
-    # 1.4 Get the workspace dir name
-    ######################################################
-    ws_dir_name = ws_root_path.stem
+    # 1.4 Get the workspace name
+    workspace_name = ws_root_path.stem.replace(" ", "-").replace("_", "-").lower()
+    logger.debug(f"Workspace name: {workspace_name}")
 
-    ######################################################
-    # 1.5 Check if remote origin is available
-    ######################################################
+    # 1.5 Get the git remote origin url
     git_remote_origin_url: Optional[str] = get_remote_origin_for_dir(ws_root_path)
     logger.debug("Git origin: {}".format(git_remote_origin_url))
 
-    ######################################################
     # 1.6 Create anon user if the user is not logged in
-    ######################################################
     if phi_config.user is None:
         from phi.api.user import create_anon_user
 
         logger.debug("Creating anon user")
-        anon_user = create_anon_user()
+        with Live(transient=True) as live_log:
+            status = Status("Creating user...", spinner="aesthetic", speed=2.0, refresh_per_second=10)
+            live_log.update(status)
+            anon_user = create_anon_user()
+            status.stop()
         if anon_user is not None:
             phi_config.user = anon_user
 
     ######################################################
-    ## 2. Create or Update WorkspaceSchema
+    ## 2. Create or update WorkspaceSchema
     ######################################################
-    # If a ws_schema exists for this workspace, this workspace is synced with the api
+    # 2.1 Check if a ws_schema exists for this workspace, meaning this workspace has a record in phi-api
     ws_schema: Optional[WorkspaceSchema] = ws_config.ws_schema if ws_config is not None else None
     if phi_config.user is not None:
-        ######################################################
-        # 2.1 Create WorkspaceSchema for NEW WORKSPACE
-        ######################################################
+        # 2.2 Create WorkspaceSchema if it doesn't exist
         if ws_schema is None or ws_schema.id_workspace is None:
             from phi.api.team import get_teams_for_user
             from phi.api.workspace import create_workspace_for_user
-            from phi.workspace.helpers import generate_workspace_name
 
-            # If ws_schema is None, this is a NEWLY CREATED WORKSPACE.
+            # If ws_schema is None, this is a NEW WORKSPACE.
             # We make a call to the api to create a new ws_schema
-            new_workspace_name = generate_workspace_name(ws_dir_name=ws_dir_name)
-            logger.debug("Creating ws_schema for new workspace")
-            logger.debug(f"ws_dir_name: {ws_dir_name}")
-            logger.debug(f"workspace_name: {new_workspace_name}")
-            logger.debug(f"git_url: {git_remote_origin_url}")
-
+            logger.debug("Creating ws_schema")
             logger.debug(f"Getting teams for user: {phi_config.user.email}")
             teams: Optional[List[TeamSchema]] = None
             selected_team: Optional[TeamSchema] = None
@@ -293,6 +283,7 @@ def setup_workspace(ws_root_path: Path, team: Optional[str] = None) -> bool:
                 )
                 live_log.update(status)
                 teams = get_teams_for_user(phi_config.user)
+                status.stop()
             if teams is not None and len(teams) > 0:
                 logger.debug(f"The user has {len(teams)} available teams. Checking if they want to use one of them")
                 print_info("Which account would you like to create this workspace in?")
@@ -312,31 +303,31 @@ def setup_workspace(ws_root_path: Path, team: Optional[str] = None) -> bool:
                         print_info(f"Creating workspace in {selected_team.name}")
                         team_identifier = TeamIdentifier(id_team=selected_team.id_team, team_url=selected_team.url)
 
-            ws_schema = create_workspace_for_user(
-                user=phi_config.user,
-                workspace=WorkspaceCreate(
-                    ws_name=new_workspace_name,
-                    git_url=git_remote_origin_url,
-                ),
-                team=team_identifier,
-            )
-            if ws_schema is not None:
-                logger.debug(f"Workspace created: {ws_schema.ws_name}")
-                if selected_team is not None:
-                    logger.debug(f"Selected team: {selected_team.name}")
-                ws_config = phi_config.update_ws_config(
-                    ws_root_path=ws_root_path, ws_schema=ws_schema, ws_team=selected_team, set_as_active=True
+            with Live(transient=True) as live_log:
+                status = Status("Creating workspace...", spinner="aesthetic", speed=2.0, refresh_per_second=10)
+                live_log.update(status)
+                ws_schema = create_workspace_for_user(
+                    user=phi_config.user,
+                    workspace=WorkspaceCreate(
+                        ws_name=workspace_name,
+                        git_url=git_remote_origin_url,
+                    ),
+                    team=team_identifier,
                 )
+                status.stop()
 
-        ######################################################
-        # 2.2 Update WorkspaceSchema if git_url is updated
-        ######################################################
+            logger.debug(f"Workspace created: {workspace_name}")
+            if selected_team is not None:
+                logger.debug(f"Selected team: {selected_team.name}")
+            ws_config = phi_config.create_or_update_ws_config(
+                ws_root_path=ws_root_path, ws_schema=ws_schema, ws_team=selected_team, set_as_active=True
+            )
+
+        # 2.3 Update WorkspaceSchema if git_url is updated
         if git_remote_origin_url is not None and ws_schema is not None and ws_schema.git_url != git_remote_origin_url:
             from phi.api.workspace import update_workspace_for_user, update_workspace_for_team
 
-            logger.debug("Updating git_url for existing workspace")
-            logger.debug(f"ws_dir_name: {ws_dir_name}")
-            logger.debug(f"workspace_name: {ws_schema.ws_name}")
+            logger.debug("Updating workspace")
             logger.debug(f"Existing git_url: {ws_schema.git_url}")
             logger.debug(f"New git_url: {git_remote_origin_url}")
 
@@ -359,11 +350,11 @@ def setup_workspace(ws_root_path: Path, team: Optional[str] = None) -> bool:
                 )
             if updated_workspace_schema is not None:
                 # Update the ws_schema for this workspace.
-                ws_config = phi_config.update_ws_config(
+                ws_config = phi_config.create_or_update_ws_config(
                     ws_root_path=ws_root_path, ws_schema=updated_workspace_schema, set_as_active=True
                 )
             else:
-                logger.debug("Failed to sync workspace with api. Please setup again")
+                logger.debug("Failed to update workspace. Please setup again")
 
     if ws_config is not None:
         # logger.debug("Workspace Config: {}".format(ws_config.model_dump_json(indent=2)))

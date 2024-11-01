@@ -20,12 +20,15 @@ console = Console()
 
 web_agent = Agent(
     name="Web Agent",
+<<<<<<< HEAD
     role="Search the web for information",
     model=OpenAIChat(id="gpt-4o-mini", api_key=OPENAI_API_KEY),
+=======
+    model=OpenAIChat(id="gpt-4o"),
+>>>>>>> 9d4059c8d213bba49def6a496fc74977a661281e
     tools=[DuckDuckGo()],
-    instructions=["Always include sources"],
-    markdown=True,
     show_tool_calls=True,
+<<<<<<< HEAD
     add_datetime_to_instructions=True,
     debug_mode=True,
 )
@@ -36,3 +39,8 @@ user_input = Prompt.ask("[yellow]Enter your search query[/yellow]")
 
 console.print("\n[bold green]Searching the web...[/bold green]")
 web_agent.print_response(user_input, stream=True)
+=======
+    markdown=True,
+)
+web_agent.print_response("Whats happening in France?", stream=True)
+>>>>>>> 9d4059c8d213bba49def6a496fc74977a661281e
